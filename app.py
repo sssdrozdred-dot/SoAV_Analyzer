@@ -90,6 +90,12 @@ def generate_content_with_retry(
 
 if 'step' not in st.session_state:
     st.session_state.step = 1
+# ИСПРАВЛЕНИЕ: Инициализация brand и industry, чтобы избежать AttributeError
+if 'brand' not in st.session_state: 
+    st.session_state.brand = ''
+if 'industry' not in st.session_state: 
+    st.session_state.industry = ''
+    
 if 'user_queries' not in st.session_state:
     st.session_state.user_queries = ""
 if 'competitors' not in st.session_state:
@@ -130,12 +136,14 @@ with st.expander("Конфигурация", expanded=True):
     
     brand = st.text_input(
         "Ваш Бренд (YOUR_BRAND_NAME)", 
-        value=st.session_state.get('brand', 'AI-SaaS Tracker Pro'),
+        # Используем значение из session_state для сохранения после reruns
+        value=st.session_state.brand if st.session_state.brand else 'AI-SaaS Tracker Pro',
         help="Название вашего бренда, который вы отслеживаете."
     )
     industry = st.text_area(
         "Описание Индустрии (INDUSTRY_DESCRIPTION)", 
-        value=st.session_state.get('industry', 'Инструменты для аналитики AI-решений и отслеживания метрик SaaS.'),
+        # Используем значение из session_state для сохранения после reruns
+        value=st.session_state.industry if st.session_state.industry else 'Инструменты для аналитики AI-решений и отслеживания метрик SaaS.',
         help="Подробное описание вашей категории продукта/рынка."
     )
 
@@ -156,7 +164,7 @@ with st.expander("Конфигурация", expanded=True):
             if brand and industry:
                 try:
                     st.session_state.client = genai.Client(api_key=api_key_to_use)
-                    st.session_state.gemini_key = api_key_to_use
+                    # Обновляем session_state после успешного ввода
                     st.session_state.brand = brand
                     st.session_state.industry = industry
                     st.session_state.step = 2
@@ -546,6 +554,11 @@ elif st.session_state.step == 6:
 
 # Футер
 st.sidebar.markdown("---")
+# ИСПРАВЛЕНИЕ: Используем условие, чтобы не показывать пустой бренд при первом запуске
+if st.session_state.brand:
+    st.sidebar.markdown(f"**Ваш Бренд:** `{st.session_state.brand}`")
+else:
+    st.sidebar.markdown(f"**Ваш Бренд:** *Не задан*")
+    
 st.sidebar.markdown(f"**Текущий Модель:** `{MODEL_NAME}`")
-st.sidebar.markdown(f"**Ваш Бренд:** `{st.session_state.brand}`")
 st.sidebar.markdown(f"**Текущий Шаг:** Шаг {st.session_state.step}")
