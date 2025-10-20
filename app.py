@@ -9,9 +9,10 @@ from typing import List, Dict, Any, Optional
 
 # --- Константы и Настройки ---
 MODEL_NAME = "gemini-2.5-flash"
-# DEFAULT_API_KEY больше не используется, ключ загружается из st.secrets
 
-# JSON-схема для структурированного позиционного и тонального анализа (Шаг 5)
+# JSON-схема для структурированного позиционного и тонального анализа (Шаг 4)
+# Примечание: Мы по-прежнему просим LLM вернуть до 3 наиболее заметных брендов, 
+# так как это обеспечивает лучшую точность ранжирования, но 3-е место получает базовый балл для всех последующих.
 SOV_ANALYSIS_SCHEMA = {
     "type": "ARRAY",
     "description": "A ranked list of up to 3 brands from the provided competitor list that are clearly recommended, ordered by their prominence/rank (most prominent/first mention is index 0). Each entry must include the brand name and the associated sentiment.",
@@ -116,7 +117,7 @@ st.set_page_config(
     layout="centered"
 )
 
-st.title("🗣️ AI Share of Voice (SoV) Анализатор (v3.0 - Позиция и Тональность)")
+st.title("🗣️ AI Share of Voice (SoV) Анализатор (v3.1 - Все Упоминания)")
 st.markdown("Измерьте, как часто Gemini рекомендует ваш бренд по сравнению с конкурентами, используя **структурированный LLM-анализ** для точного сопоставления.")
 
 # --- Шаг 1: Ввод Данных ---
@@ -125,16 +126,6 @@ st.header("Шаг 1: Ввод Настроек")
 st.info("Пожалуйста, заполните поля для начала анализа.")
 
 with st.expander("Конфигурация", expanded=True):
-    
-    # --- УДАЛЕННЫЙ БЛОК: Инструкция по API Key ---
-    # st.markdown("""
-    # API Key: Ключ будет автоматически загружен из .streamlit/secrets.toml.
-    # Убедитесь, что ваш файл secrets.toml содержит ключ под названием GEMINI_API_KEY:
-    # ```toml
-    # GEMINI_API_KEY = "ВАШ_СЕКРЕТНЫЙ_КЛЮЧ"
-    # ```
-    # """)
-    # --- КОНЕЦ УДАЛЕННОГО БЛОКА ---
     
     brand = st.text_input(
         "Ваш Бренд (YOUR_BRAND_NAME)", 
@@ -151,10 +142,8 @@ with st.expander("Конфигурация", expanded=True):
 
     if st.button("Сохранить Настройки и Перейти к Шагу 2"):
         
-        # --- Изменение здесь: загрузка ключа из secrets ---
-        # В Canvas API ключ всегда доступен через st.secrets["GEMINI_API_KEY"]
+        # --- Инициализация клиента ---
         if "GEMINI_API_KEY" not in st.secrets:
-            # Это произойдет только в локальной среде без secrets.toml
             st.error("Ошибка: Ключ 'GEMINI_API_KEY' не найден в конфигурации.")
             pass
         else:
@@ -167,10 +156,9 @@ with st.expander("Конфигурация", expanded=True):
                     # Обновляем session_state после успешного ввода
                     st.session_state.brand = brand
                     st.session_state.industry = industry
-                    st.session_state.step = 2
+                    st.session_state.step = 2 # Переход к Шагу 2 (Генерация Запросов)
                     st.rerun()
                 except Exception as e:
-                    # Эта ошибка маловероятна в Canvas, но полезна для отладки
                     st.error(f"Ошибка инициализации клиента: {e}. Проверьте доступность API.")
             else:
                 st.error("Пожалуйста, заполните поля 'Бренд' и 'Индустрия'.")
@@ -183,7 +171,6 @@ if st.session_state.step >= 2:
     st.header("Шаг 2: Генерация Запросов")
     st.markdown("Сгенерируйте **5** типовых запросов на прямую рекомендацию.")
     
-    # ... (Логика Шага 2 остается прежней)
     if st.button("Сгенерировать Рекомендательные Запросы", disabled=st.session_state.step != 2):
         if st.session_state.client:
             with st.spinner("Gemini генерирует запросы..."):
@@ -204,7 +191,7 @@ if st.session_state.step >= 2:
                         queries = json.loads(json_response)
                         if isinstance(queries, list) and all(isinstance(q, str) for q in queries):
                             st.session_state.user_queries = "\n".join(queries)
-                            st.session_state.step = 3
+                            st.session_state.step = 3 # Переход к Шагу 3 (Ввод Конкурентов)
                             st.success("Запросы сгенерированы! Перейдите к Шагу 3.")
                         else:
                             st.error("Ошибка парсинга: Gemini не вернул корректный JSON-список строк.")
@@ -227,330 +214,286 @@ if st.session_state.step >= 2:
     if st.session_state.step >= 3:
         st.divider()
 
-        # --- Шаг 3: Определение Конкурентов ---
+        # --- Шаг 3: Ввод Конкурентов и Сбор Ответов Gemini ---
         
-        st.header("Шаг 3: Определение Конкурентов")
-        st.markdown("Используйте первый запрос для выявления ключевых конкурентов.")
-
-        if not final_queries:
-            st.warning("Сначала сгенерируйте и подтвердите запросы в Шаге 2.")
-        else:
-            first_query = final_queries[0]
-            st.markdown(f"**Анализируемый запрос:** `{first_query}`")
-
-            # ... (Логика Шага 3 остается прежней)
-            if st.button("Определить Конкурентов", disabled=st.session_state.step != 3):
-                if st.session_state.client:
-                    with st.spinner("Gemini определяет конкурентов..."):
-                        prompt = (
-                            f"Ответь на запрос '{first_query}'. Включи в ответ список из 5-7 наиболее часто "
-                            f"рекомендуемых или популярных брендов в этой категории, включая бренд {st.session_state.brand}. "
-                            f"Выведи список брендов, разделенных запятыми, без лишнего текста. Бренды должны быть уникальными."
-                        )
-
-                        response = generate_content_with_retry(
-                            st.session_state.client, 
-                            prompt
-                        )
-                        
-                        if response:
-                            competitor_list = [c.strip() for c in response.split(',') if c.strip()]
-                            unique_brands = set()
-                            unique_brands.add(st.session_state.brand.strip())
-                            
-                            for brand_name in competitor_list:
-                                cleaned_brand = re.sub(r'["\'*]', '', brand_name).strip()
-                                if cleaned_brand:
-                                    unique_brands.add(cleaned_brand)
-
-                            st.session_state.competitors = ", ".join(sorted(list(unique_brands)))
-                            st.session_state.step = 4
-                            st.success("Конкуренты определены! Перейдите к Шагу 4.")
-                        else:
-                            st.error("Не удалось определить конкурентов.")
-
-            if st.session_state.step >= 4:
-                st.subheader("Финальный Список Отслеживаемых Брендов (через запятую):")
-                st.session_state.competitors = st.text_area(
-                    "Список Брендов:", 
-                    value=st.session_state.competitors,
-                    height=100,
-                    help="Убедитесь, что ваш бренд включен. Бренды должны быть разделены запятыми."
-                )
-                
-                final_competitors = [c.strip() for c in st.session_state.competitors.split(',') if c.strip()]
-                st.caption(f"Будет отслеживаться брендов: {len(final_competitors)}")
-
-            if st.session_state.step >= 4:
-                st.divider()
-
-                # --- Шаг 4: Сбор Ответов Gemini ---
-
-                st.header("Шаг 4: Сбор Ответов Gemini")
-                st.info("Получаем сырые ответы от Gemini на все заданные запросы.")
-                
-                if st.button("Получить Ответы Gemini", disabled=st.session_state.step != 4):
-                    if not final_queries:
-                        st.error("Убедитесь, что запросы заполнены.")
-                    elif st.session_state.client:
-                        st.session_state.raw_responses = [] # Сброс
-                        N = len(final_queries)
-                        progress_bar = st.progress(0, text="Идет получение ответов...")
-
-                        for i, query in enumerate(final_queries):
-                            progress_value = (i + 1) / N
-                            progress_bar.progress(progress_value, text=f"Получение ответа на запрос {i+1}/{N}")
-                            
-                            # Примечание: Для сбора ответов, не используем grounding tool, чтобы получить общие рекомендации LLM
-                            answer_text = generate_content_with_retry(
-                                st.session_state.client, 
-                                prompt=query, 
-                                max_retries=2
-                            )
-                            
-                            if answer_text:
-                                st.session_state.raw_responses.append({'query': query, 'answer': answer_text})
-                            else:
-                                st.session_state.raw_responses.append({'query': query, 'answer': "Ошибка получения ответа API"})
-                            
-                        progress_bar.progress(1.0, text="Сбор ответов завершен!")
-                        st.success(f"Собрано {len(st.session_state.raw_responses)} ответов. Перейдите к Шагу 5 для анализа.")
-                        st.session_state.step = 5 # Переход к новому Шагу 5
-                        st.rerun()
+        st.header("Шаг 3: Ввод Конкурентов и Сбор Ответов")
+        st.info("Введите список брендов, которые будут отслеживаться, и соберите ответы Gemini.")
+        
+        st.subheader("Список Отслеживаемых Брендов (через запятую):")
+        st.session_state.competitors = st.text_area(
+            "Список Брендов:", 
+            value=st.session_state.competitors if st.session_state.competitors else st.session_state.brand,
+            height=100,
+            help="Убедитесь, что ваш бренд включен. Бренды должны быть разделены запятыми."
+        )
+        
+        final_competitors = [c.strip() for c in st.session_state.competitors.split(',') if c.strip()]
+        st.caption(f"Будет отслеживаться брендов: {len(final_competitors)}")
 
 
-            if st.session_state.step >= 5:
-                st.divider()
-                
-                # --- Шаг 5: Структурированный Анализ и Расчет AI SoV ---
+        if st.button("Получить Ответы Gemini", disabled=st.session_state.step != 3):
+            if not final_queries:
+                st.error("Убедитесь, что запросы заполнены в Шаге 2.")
+            elif not final_competitors:
+                 st.error("Убедитесь, что список отслеживаемых брендов заполнен.")
+            elif st.session_state.client:
+                st.session_state.raw_responses = [] # Сброс
+                N = len(final_queries)
+                progress_bar = st.progress(0, text="Идет получение ответов...")
 
-                st.header("Шаг 5: Структурированный Анализ AI SoV (Позиция и Тональность)")
-                st.info(f"Нажмите, чтобы проанализировать {len(st.session_state.raw_responses)} сырых ответов Gemini и рассчитать Share of Voice.")
-                
-                # --- Отображение сырых ответов (Данные для Шага 5, перемещено сюда для проверки) ---
-                if st.session_state.raw_responses:
-                    st.subheader("Данные для Анализа (Сырые Ответы из Шага 4)")
-                    st.caption("Проверьте эти ответы. Анализ LLM будет проведен на основе этого текста.")
-                    for i, item in enumerate(st.session_state.raw_responses):
-                        with st.expander(f"Ответ {i+1}: {item['query'][:60]}..."):
-                            st.code(item['answer'], language='markdown')
-
-
-                if st.button("Провести Структурированный Анализ и Расчет SoV", disabled=st.session_state.step != 5 or not st.session_state.raw_responses):
-                    if not final_competitors:
-                        st.error("Убедитесь, что конкуренты заполнены в Шаге 3.")
-                    elif st.session_state.client and st.session_state.raw_responses:
-                        
-                        # --- НОВЫЕ КОНСТАНТЫ СЧЕТА И МНОЖИТЕЛЕЙ ---
-                        # Base Position Score
-                        POSITION_SCORES = {
-                            0: 3.0, # 1st place
-                            1: 2.0, # 2nd place
-                            2: 1.0, # 3rd place
-                            # Brands ranked below 3rd are not scored via structured output.
-                        }
-                        # Sentiment Multipliers
-                        SENTIMENT_MULTIPLIERS = {
-                            "Positive": 1.5,
-                            "Neutral": 1.0,
-                            "Negative": 0.0
-                        }
-                        # -------------------------------------------
-                        
-                        # Инициализация счетчиков
-                        brand_scores: Dict[str, float] = {brand.strip(): 0.0 for brand in final_competitors}
-                        total_tracked_score = 0.0 # Общий взвешенный счет всех упоминаний
-                        
-                        st.session_state.analysis_details = [] # Сброс и инициализация детального отчета
-                        
-                        N = len(st.session_state.raw_responses)
-                        TotalSteps = N 
-                        progress_bar = st.progress(0, text="Идет структурированный анализ...")
-
-                        for i, item in enumerate(st.session_state.raw_responses):
-                            query = item['query']
-                            answer_text = item['answer']
-                            
-                            # Пропускаем ответы с ошибками
-                            if answer_text == "Ошибка получения ответа API":
-                                st.session_state.analysis_details.append({
-                                    'Запрос': query,
-                                    'Ответ Gemini': answer_text,
-                                    'Анализ (Позиция, Тональность, Счет)': "Ошибка",
-                                    'Общий Счет Запроса': 0.0
-                                })
-                                continue
-
-                            # Обновление прогресса
-                            progress_value = (i + 1) / TotalSteps
-                            progress_bar.progress(progress_value, text=f"Анализ упоминаний для запроса {i+1}/{N}")
-
-                            # 1. Структурированный анализ упоминаний брендов (LLM-анализ)
-                            system_instruction_analysis = (
-                                "Вы — высокоточный движок позиционного и тонального анализа сущностей. "
-                                "Внимательно проанализируйте весь предоставленный 'ТЕКСТ_ДЛЯ_АНАЛИЗА' (сырой ответ Gemini). "
-                                "Ваша задача — определить, какие из брендов из 'СПИСОК_БРЕНДОВ' (включая собственный) являются наиболее рекомендуемыми или "
-                                "наиболее заметными в этом тексте, и вернуть их в порядке убывания важности/ранга (максимум 3). "
-                                "Для каждого бренда также определите тональность упоминания (Positive, Neutral, или Negative). "
-                                "Используйте названия брендов СТРОГО из 'СПИСОК_БРЕНДОВ'. Выведите ТОЛЬКО JSON-объект, следуя предоставленной схеме. Не выводите другой текст."
-                            )
-                            
-                            analysis_prompt = (
-                                f"ТЕКСТ_ДЛЯ_АНАЛИЗА: '''{answer_text}'''\n\n"
-                                f"СПИСОК_БРЕНДОВ: {final_competitors}"
-                            )
-                            
-                            json_analysis_response = generate_content_with_retry(
-                                st.session_state.client,
-                                analysis_prompt,
-                                system_instruction=system_instruction_analysis,
-                                json_output=True,
-                                response_schema=SOV_ANALYSIS_SCHEMA # Используем новую схему
-                            )
-                            
-                            current_query_score = 0.0
-                            detected_brands_details = [] # [{'brandName': 'X', 'sentiment': 'Y', 'score': Z}]
-                            
-                            if json_analysis_response:
-                                try:
-                                    ranked_brands_data = json.loads(json_analysis_response)
-                                    
-                                    if isinstance(ranked_brands_data, list):
-                                        for rank, brand_entry in enumerate(ranked_brands_data):
-                                            
-                                            brand_name_ranked = brand_entry.get('brandName', '').strip()
-                                            sentiment = brand_entry.get('sentiment', 'Neutral').strip()
-                                            
-                                            # 1. Определяем базовый позиционный балл
-                                            base_score = POSITION_SCORES.get(rank, 0.0) # 0.0, если ранг > 2
-                                            
-                                            # 2. Определяем тональный множитель
-                                            multiplier = SENTIMENT_MULTIPLIERS.get(sentiment, 1.0)
-                                            
-                                            # 3. Расчет итогового счета
-                                            final_score = base_score * multiplier
-
-                                            # 4. Проверка и сохранение
-                                            if brand_name_ranked in final_competitors and final_score > 0:
-                                                
-                                                brand_scores[brand_name_ranked] += final_score
-                                                current_query_score += final_score
-                                                
-                                                detected_brands_details.append({
-                                                    'brandName': brand_name_ranked,
-                                                    'sentiment': sentiment,
-                                                    'score': round(final_score, 2)
-                                                })
-                                                
-                                        # Обновляем общий счет, если был засчитан хотя бы один бренд
-                                        if current_query_score > 0:
-                                            total_tracked_score += current_query_score
-
-                                except json.JSONDecodeError:
-                                    st.error(f"Ошибка декодирования JSON при анализе для запроса: {query}")
-                                
-                            
-                            # Форматируем детали для отчета
-                            details_text = "\n".join([
-                                f"  - {d['brandName']}: Позиция {rank+1 if rank < 3 else 'н/д'}, Тональность '{d['sentiment']}', Счет: {d['score']}"
-                                for rank, d in enumerate(detected_brands_details)
-                            ])
-                            if not details_text:
-                                details_text = "Не найдено или Счет 0"
-                                
-                            # Добавляем детали в отчет
-                            st.session_state.analysis_details.append({
-                                'Запрос': query,
-                                'Ответ Gemini': answer_text, 
-                                'Анализ (Позиция, Тональность, Счет)': details_text,
-                                'Общий Счет Запроса': round(current_query_score, 2)
-                            })
-                            
-                        progress_bar.progress(1.0, text="Анализ завершен!")
-                        st.success("Анализ Share of Voice завершен!")
-
-                        # Формирование финальной таблицы результатов
-                        final_data = []
-                        for brand_name_original in final_competitors:
-                            score = brand_scores.get(brand_name_original, 0.0)
-                            
-                            # Расчет SoV
-                            sov = 0.0
-                            if total_tracked_score > 0:
-                                sov = (score / total_tracked_score) * 100
-                            
-                            final_data.append({
-                                "Бренд": brand_name_original.strip(),
-                                "Итоговый Счет (Total Weighted Score)": round(score, 2),
-                                "AI Share of Voice (%)": round(sov, 2)
-                            })
-                        
-                        st.session_state.results = pd.DataFrame(final_data).sort_values(
-                            by=["Итоговый Счет (Total Weighted Score)", "AI Share of Voice (%)"], 
-                            ascending=False
-                        ).reset_index(drop=True)
-                        st.session_state.step = 6 # Переход к финальному шагу
-                        st.rerun()
-
-
-            if st.session_state.step == 6 and st.session_state.results is not None:
-                
-                st.divider()
-                
-                # --- Шаг 6: Вывод Результатов ---
-                st.header("Шаг 6: Результаты AI Share of Voice")
-                
-                # Выделение вашего бренда
-                your_brand_name = st.session_state.brand.strip()
-                your_brand_row = st.session_state.results[st.session_state.results["Бренд"] == your_brand_name]
-                
-                if not your_brand_row.empty:
-                    st.metric(
-                        label=f"Ваш AI SoV ({your_brand_name})", 
-                        value=f'{your_brand_row["AI Share of Voice (%)"].iloc[0]}%'
+                for i, query in enumerate(final_queries):
+                    progress_value = (i + 1) / N
+                    progress_bar.progress(progress_value, text=f"Получение ответа на запрос {i+1}/{N}")
+                    
+                    answer_text = generate_content_with_retry(
+                        st.session_state.client, 
+                        prompt=query, 
+                        max_retries=2
                     )
                     
-                st.subheader("Сводная Таблица AI SoV")
-                st.dataframe(st.session_state.results, use_container_width=True)
+                    if answer_text:
+                        st.session_state.raw_responses.append({'query': query, 'answer': answer_text})
+                    else:
+                        st.session_state.raw_responses.append({'query': query, 'answer': "Ошибка получения ответа API"})
+                    
+                progress_bar.progress(1.0, text="Сбор ответов завершен!")
+                st.success(f"Собрано {len(st.session_state.raw_responses)} ответов. Перейдите к Шагу 4 для анализа.")
+                st.session_state.step = 4 # Переход к Шагу 4 (Анализ)
+                st.rerun()
 
-                # Пункт 1: Отображение детального отчета
-                st.subheader("Подробный Отчет и Ответы Gemini (по данным Шага 5)")
+
+if st.session_state.step >= 4:
+    st.divider()
+    
+    # --- Шаг 4: Структурированный Анализ и Расчет AI SoV ---
+
+    st.header("Шаг 4: Структурированный Анализ AI SoV (Позиция и Тональность)")
+    st.info(f"Нажмите, чтобы проанализировать {len(st.session_state.raw_responses)} сырых ответов Gemini и рассчитать Share of Voice.")
+    
+    # --- Отображение сырых ответов (Данные для Шага 4) ---
+    if st.session_state.raw_responses:
+        st.subheader("Данные для Анализа (Сырые Ответы из Шага 3)")
+        st.caption("Проверьте эти ответы. Анализ LLM будет проведен на основе этого текста.")
+        for i, item in enumerate(st.session_state.raw_responses):
+            with st.expander(f"Ответ {i+1}: {item['query'][:60]}..."):
+                st.code(item['answer'], language='markdown')
+
+
+    if st.button("Провести Структурированный Анализ и Расчет SoV", disabled=st.session_state.step != 4 or not st.session_state.raw_responses):
+        if not final_competitors:
+            st.error("Убедитесь, что конкуренты заполнены в Шаге 3.")
+        elif st.session_state.client and st.session_state.raw_responses:
+            
+            # --- КОНСТАНТЫ СЧЕТА И МНОЖИТЕЛЕЙ ---
+            # Базовый позиционный балл (Position Score)
+            # 3-е место и все последующие получают базовый балл 1.0
+            POSITION_SCORES = {
+                0: 3.0, # 1st place
+                1: 2.0, # 2nd place
+                2: 1.0, # 3rd place и последующие
+            }
+            # Тональные множители (Sentiment Multipliers)
+            SENTIMENT_MULTIPLIERS = {
+                "Positive": 1.5,
+                "Neutral": 1.0,
+                "Negative": 0.0
+            }
+            # -------------------------------------------
+            
+            # Инициализация счетчиков
+            brand_scores: Dict[str, float] = {brand.strip(): 0.0 for brand in final_competitors}
+            total_tracked_score = 0.0 # Общий взвешенный счет всех упоминаний
+            
+            st.session_state.analysis_details = [] # Сброс и инициализация детального отчета
+            
+            N = len(st.session_state.raw_responses)
+            TotalSteps = N 
+            progress_bar = st.progress(0, text="Идет структурированный анализ...")
+
+            for i, item in enumerate(st.session_state.raw_responses):
+                query = item['query']
+                answer_text = item['answer']
                 
-                # Обновленная таблица весов для пояснения
-                st.markdown("""
-                **Система Взвешивания:**
-                | Критерий | Позиция (Базовый Счет) | Тональность (Множитель) |
-                | :--- | :--- | :--- |
-                | **🥇 1-я рекомендация** | 3.0 | Положительная **$\times 1.5$** |
-                | **🥈 2-я позиция** | 2.0 | Нейтральная **$\times 1.0$** |
-                | **🥉 3-я позиция** | 1.0 | Отрицательная **$\times 0.0$** |
-                """)
-                st.caption("Итоговый Счет = Базовый Счет $\times$ Множитель. Упоминания ниже 3-й позиции игнорируются при структурированном анализе.")
+                # Пропускаем ответы с ошибками
+                if answer_text == "Ошибка получения ответа API":
+                    st.session_state.analysis_details.append({
+                        'Запрос': query,
+                        'Ответ Gemini': answer_text,
+                        'Анализ (Позиция, Тональность, Счет)': "Ошибка",
+                        'Общий Счет Запроса': 0.0
+                    })
+                    continue
+
+                # Обновление прогресса
+                progress_value = (i + 1) / TotalSteps
+                progress_bar.progress(progress_value, text=f"Анализ упоминаний для запроса {i+1}/{N}")
+
+                # 1. Структурированный анализ упоминаний брендов (LLM-анализ)
+                system_instruction_analysis = (
+                    "Вы — высокоточный движок позиционного и тонального анализа сущностей. "
+                    "Внимательно проанализируйте весь предоставленный 'ТЕКСТ_ДЛЯ_АНАЛИЗА' (сырой ответ Gemini). "
+                    "Ваша задача — определить, какие из брендов из 'СПИСОК_БРЕНДОВ' (включая собственный) являются наиболее рекомендуемыми или "
+                    "наиболее заметными в этом тексте, и вернуть их в порядке убывания важности/ранга (максимум 3). "
+                    "Для каждого бренда также определите тональность упоминания (Positive, Neutral, или Negative). "
+                    "Используйте названия брендов СТРОГО из 'СПИСОК_БРЕНДОВ'. Выведите ТОЛЬКО JSON-объект, следуя предоставленной схеме. Не выводите другой текст."
+                )
                 
-                for detail in st.session_state.analysis_details:
-                    with st.expander(f"Запрос: {detail['Запрос'][:60]}... (Счет: {detail['Общий Счет Запроса']})"):
-                        st.markdown(f"**Запрос:** `{detail['Запрос']}`")
-                        st.markdown(f"**Общий Счет Запроса:** `{detail['Общий Счет Запроса']}`")
-                        st.markdown(f"**Детали Анализа:**")
-                        st.code(detail['Анализ (Позиция, Тональность, Счет)'], language='markdown')
-                        st.markdown("---")
-                        st.markdown("**Полный Ответ Gemini:**")
-                        st.code(detail['Ответ Gemini'], language='markdown')
+                analysis_prompt = (
+                    f"ТЕКСТ_ДЛЯ_АНАЛИЗА: '''{answer_text}'''\n\n"
+                    f"СПИСОК_БРЕНДОВ: {final_competitors}"
+                )
+                
+                json_analysis_response = generate_content_with_retry(
+                    st.session_state.client,
+                    analysis_prompt,
+                    system_instruction=system_instruction_analysis,
+                    json_output=True,
+                    response_schema=SOV_ANALYSIS_SCHEMA 
+                )
+                
+                current_query_score = 0.0
+                detected_brands_details = [] # [{'brandName': 'X', 'sentiment': 'Y', 'score': Z}]
+                
+                if json_analysis_response:
+                    try:
+                        ranked_brands_data = json.loads(json_analysis_response)
+                        
+                        if isinstance(ranked_brands_data, list):
+                            for rank, brand_entry in enumerate(ranked_brands_data):
+                                
+                                brand_name_ranked = brand_entry.get('brandName', '').strip()
+                                sentiment = brand_entry.get('sentiment', 'Neutral').strip()
+                                
+                                # 1. Определяем базовый позиционный балл
+                                # Если ранг >= 2 (3-е место или ниже), используем 1.0. Иначе - 3.0 или 2.0.
+                                base_score = POSITION_SCORES.get(rank, 1.0) 
+                                
+                                # 2. Определяем тональный множитель
+                                multiplier = SENTIMENT_MULTIPLIERS.get(sentiment, 1.0)
+                                
+                                # 3. Расчет итогового счета
+                                final_score = base_score * multiplier
+
+                                # 4. Проверка и сохранение
+                                if brand_name_ranked in final_competitors and final_score > 0:
+                                    
+                                    brand_scores[brand_name_ranked] += final_score
+                                    current_query_score += final_score
+                                    
+                                    detected_brands_details.append({
+                                        'brandName': brand_name_ranked,
+                                        'sentiment': sentiment,
+                                        'score': round(final_score, 2),
+                                        'rank': rank # Сохраняем ранг для отображения
+                                    })
+                                    
+                            # Обновляем общий счет, если был засчитан хотя бы один бренд
+                            if current_query_score > 0:
+                                total_tracked_score += current_query_score
+
+                    except json.JSONDecodeError:
+                        st.error(f"Ошибка декодирования JSON при анализе для запроса: {query}")
+                    
+                
+                # Форматируем детали для отчета
+                details_text = "\n".join([
+                    f"  - {d['brandName']}: Позиция {d['rank']+1}, Тональность '{d['sentiment']}', Счет: {d['score']}"
+                    for d in detected_brands_details
+                ])
+                if not details_text:
+                    details_text = "Не найдено или Счет 0"
+                    
+                # Добавляем детали в отчет
+                st.session_state.analysis_details.append({
+                    'Запрос': query,
+                    'Ответ Gemini': answer_text, 
+                    'Анализ (Позиция, Тональность, Счет)': details_text,
+                    'Общий Счет Запроса': round(current_query_score, 2)
+                })
+                
+            progress_bar.progress(1.0, text="Анализ завершен!")
+            st.success("Анализ Share of Voice завершен!")
+
+            # Формирование финальной таблицы результатов
+            final_data = []
+            for brand_name_original in final_competitors:
+                score = brand_scores.get(brand_name_original, 0.0)
+                
+                # Расчет SoV
+                sov = 0.0
+                if total_tracked_score > 0:
+                    sov = (score / total_tracked_score) * 100
+                
+                final_data.append({
+                    "Бренд": brand_name_original.strip(),
+                    "Итоговый Счет (Total Weighted Score)": round(score, 2),
+                    "AI Share of Voice (%)": round(sov, 2)
+                })
+            
+            st.session_state.results = pd.DataFrame(final_data).sort_values(
+                by=["Итоговый Счет (Total Weighted Score)", "AI Share of Voice (%)"], 
+                ascending=False
+            ).reset_index(drop=True)
+            st.session_state.step = 5 # Переход к финальному шагу
+            st.rerun()
+
+
+if st.session_state.step == 5 and st.session_state.results is not None:
+    
+    st.divider()
+    
+    # --- Шаг 5: Вывод Результатов ---
+    st.header("Шаг 5: Результаты AI Share of Voice")
+    
+    # Выделение вашего бренда
+    your_brand_name = st.session_state.brand.strip()
+    your_brand_row = st.session_state.results[st.session_state.results["Бренд"] == your_brand_name]
+    
+    if not your_brand_row.empty:
+        st.metric(
+            label=f"Ваш AI SoV ({your_brand_name})", 
+            value=f'{your_brand_row["AI Share of Voice (%)"].iloc[0]}%'
+        )
+        
+    st.subheader("Сводная Таблица AI SoV")
+    st.dataframe(st.session_state.results, use_container_width=True)
+
+    # Пункт 1: Отображение детального отчета
+    st.subheader("Подробный Отчет и Ответы Gemini (по данным Шага 4)")
+    
+    # Обновленная таблица весов для пояснения
+    st.markdown("""
+    **Система Взвешивания (3-е место и ниже получают 1.0 балл):**
+    | Критерий | Позиция (Базовый Счет) | Тональность (Множитель) |
+    | :--- | :--- | :--- |
+    | **🥇 1-я рекомендация** | 3.0 | Положительная **$\times 1.5$** |
+    | **🥈 2-я позиция** | 2.0 | Нейтральная **$\times 1.0$** |
+    | **🥉 3-я позиция и ниже** | 1.0 | Отрицательная **$\times 0.0$** |
+    """)
+    st.caption("Итоговый Счет = Базовый Счет $\times$ Множитель. LLM анализирует до 3 наиболее заметных рекомендаций, применяя базовый счет 1.0 к 3-й позиции (и далее).")
+    
+    for detail in st.session_state.analysis_details:
+        with st.expander(f"Запрос: {detail['Запрос'][:60]}... (Счет: {detail['Общий Счет Запроса']})"):
+            st.markdown(f"**Запрос:** `{detail['Запрос']}`")
+            st.markdown(f"**Общий Счет Запроса:** `{detail['Общий Счет Запроса']}`")
+            st.markdown(f"**Детали Анализа:**")
+            st.code(detail['Анализ (Позиция, Тональность, Счет)'], language='markdown')
+            st.markdown("---")
+            st.markdown("**Полный Ответ Gemini:**")
+            st.code(detail['Ответ Gemini'], language='markdown')
 
 
 # --- Общее Состояние Приложения (Пояснения) ---
 
 if st.session_state.step == 1:
-    st.info("Введите ваш API ключ (или замените его в коде), название бренда и описание индустрии, чтобы начать.")
+    st.info("Введите название бренда и описание индустрии, чтобы начать.")
 elif st.session_state.step == 2:
     st.info("Нажмите кнопку 'Сгенерировать Рекомендательные Запросы' для продолжения.")
 elif st.session_state.step == 3:
-    st.info("Проверьте запросы и нажмите 'Определить Конкурентов'.")
+    st.info("Введите список конкурентов и нажмите 'Получить Ответы Gemini'.")
 elif st.session_state.step == 4:
-    st.info("Проверьте список конкурентов и нажмите 'Получить Ответы Gemini'.")
-elif st.session_state.step == 5:
     st.info("Ответы получены. Проверьте сырые ответы ниже и нажмите 'Провести Структурированный Анализ и Расчет SoV'.")
-elif st.session_state.step == 6:
+elif st.session_state.step == 5:
     st.success("Анализ завершен! Вы можете просмотреть детали в разделе 'Подробный Отчет'.")
 
 # Футер
